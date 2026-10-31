@@ -35,7 +35,7 @@
   let ws = null;
   let retries = 0;
   let reconnectTimer = null;
-  let state = { mode: 'none', focus: null, bookmarks: [], url: '', home: true, vw: 1920, vh: 1080 };
+  let state = { mode: 'none', focus: null, bookmarks: [], tabs: [], activeTab: null, url: '', home: true, vw: 1920, vh: 1080 };
   let screenOn = false;
 
   // ------------------------------------------------------------------
@@ -94,6 +94,7 @@
         }
         break;
       case 'toast': toast(msg.text); break;
+      case 'popup': showNotice(msg); break;
       default: break;
     }
   }
@@ -129,6 +130,8 @@
     else if (!$('dialogSheet').hidden) closeSheet('dialogSheet');
 
     if (!$('bookmarksSheet').hidden) renderBookmarks();
+    $('tabCount').textContent = next.tabs.length > 99 ? '99+' : String(next.tabs.length);
+    if (!$('tabsSheet').hidden) renderTabs();
 
     if (screenOn && next.mode !== 'cdp') {
       setScreen(false);
@@ -602,6 +605,94 @@
     if (sel) sel.scrollIntoView({ block: 'center' });
   }
 
+  // Tabs
+
+  function renderTabs() {
+    const list = $('tabList');
+    list.textContent = '';
+    state.tabs.forEach((tab) => {
+      const row = document.createElement('div');
+      row.className = 'item' + (tab.id === state.activeTab ? ' sel' : '');
+      row.setAttribute('role', 'button');
+      const ico = document.createElement('div');
+      ico.className = 'ico';
+      ico.textContent = tab.url ? tab.url.replace(/^https?:\/\/(www\.)?/, '').charAt(0).toUpperCase() : '⌂';
+      const grow = document.createElement('div');
+      grow.className = 'grow';
+      grow.textContent = tab.title || 'Untitled';
+      const small = document.createElement('small');
+      small.textContent = tab.url ? tab.url.replace(/^https?:\/\/(www\.)?/, '') : 'Home screen';
+      grow.appendChild(small);
+      const close = document.createElement('button');
+      close.className = 'remove';
+      close.setAttribute('aria-label', 'Close tab');
+      close.innerHTML = '<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>';
+      close.addEventListener('click', (e) => {
+        e.stopPropagation();
+        send({ t: 'tabClose', id: tab.id });
+      });
+      row.addEventListener('click', () => {
+        send({ t: 'tabSwitch', id: tab.id });
+        closeSheet('tabsSheet');
+      });
+      row.append(ico, grow, close);
+      list.appendChild(row);
+    });
+    $('btnCloseOthers').hidden = state.tabs.length < 2;
+  }
+
+  $('btnTabs').addEventListener('click', () => {
+    renderTabs();
+    openSheet('tabsSheet');
+  });
+
+  $('btnNewTab').addEventListener('click', () => {
+    send({ t: 'tabNew' });
+    closeSheet('tabsSheet');
+    $('url').value = '';
+    $('url').focus();
+  });
+
+  $('btnCloseOthers').addEventListener('click', () => send({ t: 'tabCloseOthers' }));
+
+  // Pop-up notices
+
+  let noticeTimer = null;
+
+  function hideNotice() {
+    $('notice').hidden = true;
+  }
+
+  function showNotice(msg) {
+    const text = $('noticeText');
+    const host = document.createElement('b');
+    host.textContent = msg.host;
+    text.textContent = '';
+    text.append(msg.blocked ? 'Pop-up blocked: ' : 'Pop-up kept in a background tab: ', host);
+
+    const actions = $('noticeActions');
+    actions.textContent = '';
+    const action = (label, primary, cmd) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      if (primary) b.className = 'primary';
+      b.addEventListener('click', () => {
+        send(cmd);
+        hideNotice();
+      });
+      actions.appendChild(b);
+    };
+    if (msg.blocked) {
+      action('Open', true, { t: 'tabOpen', url: msg.url });
+    } else {
+      action('Show', true, { t: 'tabSwitch', id: msg.tabId });
+      action('Close', false, { t: 'tabClose', id: msg.tabId });
+    }
+    $('notice').hidden = false;
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(hideNotice, 10000);
+  }
+
   // Bookmarks
 
   function renderBookmarks() {
@@ -660,6 +751,7 @@
     $('setNatural').checked = settings.natural;
     $('setHaptics').checked = settings.haptics;
     $('setSearch').value = settings.search;
+    $('setPopups').value = state.blockPopups ? 'block' : 'tab';
     $('hapticsRow').hidden = !navigator.vibrate;
     $('version').textContent = 'Phone Browser ' + (state.version || '');
   }
@@ -669,6 +761,8 @@
   $('setNatural').addEventListener('change', (e) => { settings.natural = e.target.checked; saveSettings(); });
   $('setHaptics').addEventListener('change', (e) => { settings.haptics = e.target.checked; saveSettings(); });
   $('setSearch').addEventListener('change', (e) => { settings.search = e.target.value; saveSettings(); });
+  // Stored on the TV: it applies to every paired phone.
+  $('setPopups').addEventListener('change', (e) => send({ t: 'setting', key: 'blockPopups', value: e.target.value === 'block' }));
 
   $('btnSettings').addEventListener('click', () => {
     syncSettingsUi();

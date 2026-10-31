@@ -25,7 +25,9 @@ const ICON_SVG = __ICON_SVG__;
 const HOME_HTML = '<!doctype html><html><head><meta charset="utf-8"><title>Phone Browser</title></head>' +
     '<body style="background:#0b0d12"><script src="/agent.js"></script></body></html>';
 
+const HOME_URL = 'http://127.0.0.1:' + PORT + '/home';
 const ALLOWED_URL = /^(https?:\/\/|about:blank)/i;
+const MAX_TABS = 30;
 const KEYS = {
     'Enter': [13, 'Enter', '\r'],
     'Backspace': [8, 'Backspace'],
@@ -166,6 +168,7 @@ function handleAgentEvent(ev) {
             page.home = !!ev.home;
             cursor.x = Math.min(cursor.x, page.vw - 1);
             cursor.y = Math.min(cursor.y, page.vh - 1);
+            updateActiveTab(page.url, page.title, ev.t === 'hello');
             if (ev.t === 'hello') {
                 page.focus = ev.focus || null;
                 pushHome();
@@ -190,6 +193,15 @@ function handleAgentEvent(ev) {
             break;
         case 'notice':
             toastPhones(String(ev.text || ''));
+            break;
+        case 'open': // the user clicked a link meant for a new tab
+            if (/^https?:\/\//i.test(ev.url)) openTab(String(ev.url), false);
+            break;
+        case 'popup': // the page opened a window on its own
+            handlePopup(String(ev.url || ''));
+            break;
+        case 'remoteBack': // Back key on the TV remote
+            goBack();
             break;
         case 'log':
             log.info('[page]', ev.text);
@@ -367,26 +379,178 @@ function navigate(url) {
 }
 
 function goHome() {
-    return navigate('http://127.0.0.1:' + PORT + '/home');
+    return navigate(HOME_URL);
 }
 
-function goHistory(delta) {
+// All tabs share the TV's one window history. Back stays inside the active
+// tab's own entries (from tab.base on); at the first page of a tab that was
+// opened from another one, Back closes it and returns there, like Chrome on
+// Android. Compatibility mode can't see the history and just goes back.
+function goBack() {
     if (page.dialog) return toastPhones('Answer the dialog on the TV first');
-    if (!canDrive()) return toAgent({ t: 'history', delta: delta });
+    if (!canDrive()) return toAgent({ t: 'history', delta: -1 });
+    const tab = activeTab;
     return cdp.send('Page.getNavigationHistory').then((h) => {
-        const entry = h.entries[h.currentIndex + delta];
-        // Don't walk back out of the browser into TizenBrew's own UI.
-        if (!entry || !ALLOWED_URL.test(entry.url)) {
-            return toastPhones(delta < 0 ? 'Nothing to go back to' : 'Nothing to go forward to');
+        const base = tab.base != null ? tab.base : 0;
+        const prev = h.entries[h.currentIndex - 1];
+        // ALLOWED_URL also keeps Back from leaving into TizenBrew's own UI.
+        if (h.currentIndex - 1 >= base && prev && ALLOWED_URL.test(prev.url)) {
+            return cdp.send('Page.navigateToHistoryEntry', { entryId: prev.id });
         }
-        return cdp.send('Page.navigateToHistoryEntry', { entryId: entry.id });
-    }).catch(() => toAgent({ t: 'history', delta: delta }));
+        if (tab.openerId && findTab(tab.openerId)) return closeTab(tab.id);
+        return toastPhones('Nothing to go back to');
+    }).catch(() => toAgent({ t: 'history', delta: -1 }));
+}
+
+function goForward() {
+    if (page.dialog) return toastPhones('Answer the dialog on the TV first');
+    if (!canDrive()) return toAgent({ t: 'history', delta: 1 });
+    return cdp.send('Page.getNavigationHistory').then((h) => {
+        const next = h.entries[h.currentIndex + 1];
+        if (!next || !ALLOWED_URL.test(next.url)) return toastPhones('Nothing to go forward to');
+        return cdp.send('Page.navigateToHistoryEntry', { entryId: next.id });
+    }).catch(() => toAgent({ t: 'history', delta: 1 }));
 }
 
 function reload() {
     if (page.dialog) return toastPhones('Answer the dialog on the TV first');
     if (canDrive()) return cdp.send('Page.reload', {}).catch(() => toAgent({ t: 'reload' }));
     return toAgent({ t: 'reload' });
+}
+
+// ---------------------------------------------------------------------------
+// Tabs. The TV has one window: the active tab is what it shows, the others
+// are remembered addresses that load again when you switch to them.
+
+let tabSeq = 0;
+const tabs = [];
+let activeTab = null;
+let switching = null; // set while the window loads another tab's page
+let popupTimes = [];
+
+function isHomeUrl(url) {
+    return !url || url.indexOf('about:blank') === 0 || url.indexOf(HOME_URL) === 0;
+}
+
+function hostOf(url) {
+    const m = /^https?:\/\/([^/?#]+)/i.exec(url || '');
+    return m ? m[1].replace(/^www\./i, '') : 'Home';
+}
+
+function makeTab(url, title, openerId) {
+    return {
+        id: ++tabSeq,
+        url: url,
+        title: title || (isHomeUrl(url) ? 'Home' : hostOf(url)),
+        openerId: openerId || null,
+        base: null, // window history index of the tab's first page
+        created: Date.now()
+    };
+}
+
+function findTab(id) {
+    return tabs.filter((t) => t.id === id)[0] || null;
+}
+
+function saveTabs() {
+    store.setTabs(tabs.filter((t) => !isHomeUrl(t.url)).map((t) => ({ url: t.url, title: t.title })));
+}
+
+// Tabs from the last session come back as background tabs.
+store.tabs().forEach((t) => {
+    if (t && /^https?:\/\//i.test(t.url)) tabs.push(makeTab(t.url, t.title));
+});
+activeTab = makeTab(HOME_URL, 'Home');
+tabs.push(activeTab);
+
+// Keep the active tab's address and title in step with the page. While a
+// tab switch is loading, late reports from the previous page are ignored;
+// `fresh` marks reports that come from the newly loaded page.
+function updateActiveTab(url, title, fresh) {
+    if (switching) {
+        if (!fresh && Date.now() - switching.since < 10000) return;
+        switching = null;
+    }
+    // Error pages and the like keep the tab's real address.
+    if (!ALLOWED_URL.test(url || '')) return;
+    const before = activeTab.url + '|' + activeTab.title;
+    activeTab.url = url;
+    if (isHomeUrl(url)) activeTab.title = 'Home';
+    else if (title) activeTab.title = title;
+    else if (fresh) activeTab.title = hostOf(url);
+    if (before !== activeTab.url + '|' + activeTab.title) saveTabs();
+}
+
+function activateTab(tab) {
+    if (!tab || tab === activeTab) return;
+    if (page.dialog) return toastPhones('Answer the dialog on the TV first');
+    activeTab = tab;
+    tab.base = null;
+    switching = { tab: tab, since: Date.now() };
+    page.focus = null;
+    navigate(isHomeUrl(tab.url) ? HOME_URL : tab.url);
+    broadcast();
+}
+
+function trimTabs() {
+    while (tabs.length > MAX_TABS) {
+        const oldest = tabs.filter((t) => t !== activeTab).sort((a, b) => a.created - b.created)[0];
+        tabs.splice(tabs.indexOf(oldest), 1);
+    }
+}
+
+function openTab(url, background) {
+    const tab = makeTab(url, null, activeTab.id);
+    tabs.splice(tabs.indexOf(activeTab) + 1, 0, tab);
+    trimTabs();
+    if (!background) activateTab(tab);
+    saveTabs();
+    broadcast();
+    return tab;
+}
+
+function closeTab(id) {
+    const tab = findTab(id);
+    if (!tab) return;
+    const index = tabs.indexOf(tab);
+    tabs.splice(index, 1);
+    if (!tabs.length) {
+        const home = makeTab(HOME_URL, 'Home');
+        tabs.push(home);
+        activateTab(home);
+    } else if (tab === activeTab) {
+        activateTab(findTab(tab.openerId) || tabs[Math.min(index, tabs.length - 1)]);
+    }
+    saveTabs();
+    broadcast();
+}
+
+function closeOtherTabs() {
+    tabs.splice(0, tabs.length, activeTab);
+    saveTabs();
+    broadcast();
+}
+
+// A page opened a window by itself (ads, mostly). It never takes over the
+// screen: it becomes a background tab, or is dropped if pop-ups are blocked.
+function handlePopup(url) {
+    if (!/^https?:\/\//i.test(url)) return;
+    const now = Date.now();
+    // Pop-under scripts tend to fire on every click; don't pile up copies.
+    if (tabs.some((t) => t.url === url && now - t.created < 60000)) return;
+    popupTimes = popupTimes.filter((at) => now - at < 10000);
+    const notice = { t: 'popup', url: url, host: hostOf(url), blocked: true };
+    if (store.setting('blockPopups') || popupTimes.length >= 5) {
+        log.info('Blocked a pop-up:', url);
+        return sendAll(notice);
+    }
+    popupTimes.push(now);
+    const tab = openTab(url, true);
+    notice.blocked = false;
+    notice.tabId = tab.id;
+    log.info('Pop-up moved to a background tab:', url);
+    toAgent({ t: 'toast', text: 'Pop-up moved to a background tab' });
+    sendAll(notice);
 }
 
 // ---------------------------------------------------------------------------
@@ -461,6 +625,9 @@ function sendFrame(p) {
 // DevTools events
 
 cdp.on('attached', () => {
+    // Lets us catch windows that slip past the agent (see onTargetInfo).
+    cdp.send('Target.setDiscoverTargets', { discover: true })
+        .catch((e) => log.info('Pop-up window detection unavailable:', e.message));
     ensureAgent();
     readLayout();
     updateScreen();
@@ -475,10 +642,39 @@ cdp.on('detached', () => {
 
 cdp.on('Page.frameNavigated', (p) => {
     if (!p.frame || p.frame.parentId) return;
+    const loadingTab = switching && switching.tab;
     page.url = p.frame.url;
     page.focus = null;
+    updateActiveTab(p.frame.url, null, true);
+    // Remember where this tab's history starts, so Back stays inside it.
+    if (loadingTab && loadingTab === activeTab) {
+        cdp.send('Page.getNavigationHistory').then((h) => { loadingTab.base = h.currentIndex; }).catch(noop);
+    }
     broadcast();
 });
+
+// Windows the agent couldn't intercept (pop-ups from ad frames it doesn't run
+// in, forms submitted by script...) appear as new DevTools targets opened by
+// our page. Close them right away and keep their address as a background tab.
+let lastWindowOpen = null;
+const closedWindows = {};
+
+cdp.on('Page.windowOpen', (p) => {
+    lastWindowOpen = { url: p.url, at: Date.now() };
+});
+
+function onTargetInfo(info) {
+    if (!info || info.type !== 'page' || !cdp.targetId) return;
+    if (info.targetId === cdp.targetId || info.openerId !== cdp.targetId || closedWindows[info.targetId]) return;
+    closedWindows[info.targetId] = true;
+    let url = info.url;
+    if ((!url || url === 'about:blank') && lastWindowOpen && Date.now() - lastWindowOpen.at < 3000) url = lastWindowOpen.url;
+    cdp.send('Target.closeTarget', { targetId: info.targetId }).catch(noop);
+    log.info('Closed a pop-up window:', url || '(no address)');
+    if (url) handlePopup(url);
+}
+
+cdp.on('Target.targetCreated', (p) => onTargetInfo(p.targetInfo));
 
 cdp.on('Page.domContentEventFired', () => ensureAgent());
 cdp.on('Page.loadEventFired', () => {
@@ -503,8 +699,13 @@ function sendTo(phone, msg) {
     phone.conn.send(JSON.stringify(msg));
 }
 
+function sendAll(msg) {
+    const text = JSON.stringify(msg);
+    phones.forEach((p) => p.conn.send(text));
+}
+
 function toastPhones(text) {
-    phones.forEach((p) => sendTo(p, { t: 'toast', text: text }));
+    sendAll({ t: 'toast', text: text });
 }
 
 function stateMessage() {
@@ -520,6 +721,9 @@ function stateMessage() {
         vw: page.vw,
         vh: page.vh,
         bookmarks: store.bookmarks(),
+        tabs: tabs.map((t) => ({ id: t.id, url: isHomeUrl(t.url) ? '' : t.url, title: t.title })),
+        activeTab: activeTab.id,
+        blockPopups: !!store.setting('blockPopups'),
         version: VERSION
     };
 }
@@ -570,10 +774,31 @@ function handlePhone(phone, msg) {
             navigate(String(msg.url || ''));
             break;
         case 'back':
-            goHistory(-1);
+            goBack();
             break;
         case 'forward':
-            goHistory(1);
+            goForward();
+            break;
+        case 'tabNew':
+            openTab(HOME_URL, false);
+            break;
+        case 'tabOpen':
+            if (/^https?:\/\//i.test(msg.url)) openTab(String(msg.url), false);
+            break;
+        case 'tabSwitch':
+            activateTab(findTab(Number(msg.id)));
+            break;
+        case 'tabClose':
+            closeTab(Number(msg.id));
+            break;
+        case 'tabCloseOthers':
+            closeOtherTabs();
+            break;
+        case 'setting':
+            if (msg.key === 'blockPopups') {
+                store.setSetting('blockPopups', !!msg.value);
+                broadcast();
+            }
             break;
         case 'reload':
             reload();

@@ -28,7 +28,13 @@
   <form class="urlbar" id="urlForm" autocomplete="off">
     <input id="url" type="text" inputmode="url" enterkeyhint="go" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Search or type a web address">
     <button type="submit" class="go">Go</button>
+    <button type="button" class="tabs-btn" id="btnTabs" aria-label="Tabs" title="Tabs"><span id="tabCount">1</span></button>
   </form>
+
+  <div class="notice" id="notice" hidden>
+    <p id="noticeText"></p>
+    <div class="notice-actions" id="noticeActions"></div>
+  </div>
 
   <nav class="toolbar">
     <button data-cmd="back" aria-label="Back" title="Back"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
@@ -107,6 +113,19 @@
   <div class="list" id="pickerList"></div>
 </div>
 
+<div class="sheet" id="tabsSheet" hidden>
+  <div class="sheet-head">
+    <h2>Tabs</h2>
+    <div class="head-actions">
+      <button class="primary small" id="btnNewTab">+ New tab</button>
+      <button class="icon" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+  </div>
+  <p class="hint">The TV shows one tab at a time. Switching reloads that tab's page.</p>
+  <div class="list" id="tabList"></div>
+  <button class="link danger" id="btnCloseOthers">Close all other tabs</button>
+</div>
+
 <div class="sheet" id="bookmarksSheet" hidden>
   <div class="sheet-head"><h2>Bookmarks</h2><button class="icon" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <div class="list" id="bookmarkList"></div>
@@ -118,6 +137,12 @@
   <label class="field"><span>Scroll speed <output id="scrollOut"></output></span><input type="range" id="setScroll" min="0.5" max="4" step="0.1"></label>
   <label class="check"><input type="checkbox" id="setNatural"><span>Natural scrolling (content follows your fingers)</span></label>
   <label class="check" id="hapticsRow"><input type="checkbox" id="setHaptics"><span>Vibrate on tap</span></label>
+  <label class="field"><span>Pop-ups</span>
+    <select id="setPopups">
+      <option value="tab">Open in a background tab</option>
+      <option value="block">Block</option>
+    </select>
+  </label>
   <label class="field"><span>Search engine</span>
     <select id="setSearch">
       <option value="google">Google</option>

@@ -7,7 +7,10 @@
 (function () {
     'use strict';
 
-    if (window.top !== window) return;
+    if (window.top !== window) {
+        guardFrame();
+        return;
+    }
     if (window.__tvr) return;
     // Never take over TizenBrew's own launcher UI.
     if (/\/tizenbrew-ui\//.test(location.pathname)) return;
@@ -24,6 +27,8 @@
 
     var pageId = Math.random().toString(36).slice(2);
     var queue = [];
+    var lastDrain = 0;
+    var syntheticClicks = 0; // > 0 while doClick() dispatches its events
     var socket = null;
     var socketOpen = false;
     var everConnected = false;
@@ -67,6 +72,7 @@
     }
 
     function drain() {
+        lastDrain = Date.now();
         var q = queue;
         queue = [];
         return q;
@@ -165,6 +171,118 @@
             case 'toast': toast(msg.text); return true;
             default: return false;
         }
+    }
+
+    // ------------------------------------------------------------------
+    // New tabs and pop-ups. The TV has a single window, so the agent stops
+    // every attempt to open another one and reports it to the service, which
+    // keeps it as a tab: 'open' for links the user clicked, 'popup' for
+    // windows the page opened by itself.
+
+    function absoluteUrl(url) {
+        // baseURI, not location: about:srcdoc frames resolve against their parent.
+        try { return String(new URL(String(url), document.baseURI || location.href)); } catch (e) { return null; }
+    }
+
+    function opensNewWindow(target) {
+        return !!target && !/^_(self|parent|top)$/i.test(target);
+    }
+
+    function attached(el) {
+        return el.isConnected !== undefined ? el.isConnected : document.documentElement.contains(el);
+    }
+
+    // Stand-in for the window a page asked window.open() for. Pages often
+    // open a blank window first and set its location afterwards.
+    function fakeWindow(onUrl) {
+        function noop() {}
+        var loc = {
+            assign: function (u) { onUrl(u); },
+            replace: function (u) { onUrl(u); },
+            reload: noop,
+            toString: function () { return 'about:blank'; }
+        };
+        Object.defineProperty(loc, 'href', { get: function () { return 'about:blank'; }, set: function (u) { onUrl(u); } });
+        var w = {
+            closed: false,
+            opener: window,
+            name: '',
+            document: { write: noop, writeln: noop, open: noop, close: noop },
+            focus: noop,
+            blur: noop,
+            postMessage: noop,
+            moveTo: noop,
+            resizeTo: noop,
+            close: function () { w.closed = true; }
+        };
+        Object.defineProperty(w, 'location', { get: function () { return loc; }, set: function (u) { onUrl(u); } });
+        return w;
+    }
+
+    function installPopupGuards(report) {
+        function send(kind, url) {
+            var abs = absoluteUrl(url);
+            if (abs && /^https?:/i.test(abs)) report(kind, abs);
+        }
+
+        var nativeOpen = window.open;
+        window.open = function (url, name) {
+            if (/^_(self|parent|top)$/i.test(name || '')) return nativeOpen.apply(window, arguments);
+            if (url) send('popup', url);
+            return fakeWindow(function (u) { send('popup', u); });
+        };
+
+        // Links meant for a new tab: decided after the page's own handlers
+        // ran, since they may cancel the click or handle it themselves.
+        document.addEventListener('click', function (e) {
+            var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+            if (!a || a.hasAttribute('download') || !opensNewWindow(a.getAttribute('target'))) return;
+            var original = a.getAttribute('target');
+            // If the page stops the event before the check below, stay in this window.
+            a.setAttribute('target', '_self');
+            setTimeout(function () { a.setAttribute('target', original); }, 0);
+            e.__tvrLink = { url: a.href, user: e.isTrusted || syntheticClicks > 0 };
+        }, true);
+        window.addEventListener('click', function (e) {
+            var link = e.__tvrLink;
+            if (!link || e.defaultPrevented) return;
+            var abs = absoluteUrl(link.url);
+            if (!abs || !/^https?:/i.test(abs)) return; // e.g. javascript: links keep their default
+            e.preventDefault();
+            report(link.user ? 'open' : 'popup', abs);
+        });
+
+        document.addEventListener('submit', function (e) {
+            var form = e.target;
+            if (form && form.getAttribute && opensNewWindow(form.getAttribute('target'))) form.setAttribute('target', '_self');
+        }, true);
+
+        // Pop-under scripts click links that were never added to the page,
+        // which the listeners above can't see.
+        var nativeClick = HTMLElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function () {
+            if (!attached(this) && opensNewWindow(this.getAttribute('target'))) return send('popup', this.href);
+            return nativeClick.call(this);
+        };
+        var nativeDispatch = EventTarget.prototype.dispatchEvent;
+        EventTarget.prototype.dispatchEvent = function (ev) {
+            if (ev && ev.type === 'click' && this instanceof HTMLAnchorElement && !attached(this) &&
+                opensNewWindow(this.getAttribute('target'))) {
+                send('popup', this.href);
+                return false;
+            }
+            return nativeDispatch.apply(this, arguments);
+        };
+    }
+
+    // In frames (ads, embeds) the agent only guards against new windows and
+    // hands them to the top page's agent.
+    function guardFrame() {
+        if (window.__tvrFrame) return;
+        window.__tvrFrame = true;
+        installPopupGuards(function (kind, url) {
+            try { window.top.postMessage({ __tvr: kind, url: url }, '*'); } catch (e) { /* top is gone */ }
+        });
     }
 
     // ------------------------------------------------------------------
@@ -399,6 +517,15 @@
         ripple(x, y);
         var el = elAt(x, y);
         if (!el) return;
+        syntheticClicks++;
+        try {
+            clickSequence(el, x, y, count);
+        } finally {
+            syntheticClicks--;
+        }
+    }
+
+    function clickSequence(el, x, y, count) {
         fire(el, 'pointerdown', x, y, { buttons: 1 });
         if (fire(el, 'mousedown', x, y, { buttons: 1, detail: count })) {
             var f = focusTarget(el);
@@ -746,6 +873,10 @@
             case TV_KEYS.back:
                 e.preventDefault();
                 if (theater || document.fullscreenElement || document.webkitFullscreenElement) return exitFullscreen();
+                // The service keeps Back inside the current tab. On the home
+                // screen, or with no way to reach the service, Back works as usual
+                // (from home it returns to TizenBrew).
+                if (!isHome() && (socketOpen || Date.now() - lastDrain < 1500)) return emit({ t: 'remoteBack' });
                 if (history.length > 1) return history.back();
                 try { tizen.application.getCurrentApplication().exit(); } catch (err) { /* not on a TV */ }
                 break;
@@ -772,20 +903,20 @@
         }
     });
 
-    // The TV has a single window: open new-tab links and popups in place.
-    document.addEventListener('click', function (e) {
-        var a = e.target && e.target.closest ? e.target.closest('a[target]') : null;
-        if (a && !/^_(self|parent|top)$/i.test(a.target)) a.target = '_self';
-    }, true);
+    installPopupGuards(function (kind, url) {
+        emit({ t: kind, url: url });
+    });
 
-    if (!isHome()) {
-        var nativeOpen = window.open;
-        window.open = function (url) {
-            if (!url) return nativeOpen.apply(window, arguments);
-            location.href = new URL(url, location.href).href;
-            return window;
-        };
-    }
+    // Frames report their links and pop-ups here (see guardFrame).
+    window.addEventListener('message', function (e) {
+        var d = e.data;
+        if (!d || typeof d !== 'object' || typeof d.url !== 'string' || !/^https?:/i.test(d.url)) return;
+        if (d.__tvr !== 'open' && d.__tvr !== 'popup') return;
+        // Only a real click (which also activates this page) may open a
+        // foreground tab; anything else a frame sends is treated as a pop-up.
+        var active = navigator.userActivation && navigator.userActivation.isActive;
+        emit({ t: d.__tvr === 'open' && active ? 'open' : 'popup', url: d.url });
+    });
 
     // ------------------------------------------------------------------
     // Page reporting

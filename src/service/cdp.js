@@ -93,6 +93,7 @@ class Cdp extends EventEmitter {
         this.listSockets = options.listSockets || listeningSockets;
         this.attached = false;
         this.endpoint = null;
+        this.targetId = null;
         this.lastError = null;
         this.scans = 0;
         this._conn = null;
@@ -163,6 +164,7 @@ class Cdp extends EventEmitter {
             }
             this._conn = conn;
             this.attached = true;
+            this.targetId = target.id;
             this.endpoint = host + ':' + port;
             this.lastError = null;
             log.info('DevTools attached at', this.endpoint, '(' + (target.title || target.url || target.id) + ')');

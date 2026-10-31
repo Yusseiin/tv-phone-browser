@@ -10,6 +10,7 @@ On the phone you get:
 - a live preview of the TV screen that you can tap directly
 - pickers for drop-downs, and answers for `alert`/`confirm`/`prompt` dialogs
 - video controls: play/pause, ±10 s, fullscreen
+- tabs: links meant for a new tab open as a tab, and pop-ups (ads, mostly) are kept as background tabs or blocked, so they never take over the TV
 - bookmarks, shown on the phone and on the TV home screen
 
 ## How it works
@@ -24,12 +25,12 @@ On the phone you get:
                                          └──────────────────────────────────────────┘
 ```
 
-TizenBrew launches its window in debug mode and injects `dist/agent.js` into every page. The agent draws the pointer, shows the TV home screen and pairing code, and reports which field has focus.
+TizenBrew launches its window in debug mode and injects `dist/agent.js` into every page. The agent draws the pointer, shows the TV home screen and pairing code, and reports which field has focus. It also stops every attempt to open a second window (`target="_blank"` links, `window.open`, pop-unders, pop-ups from ad frames) and hands it to the service, which keeps the tab list.
 
 `dist/service.js` runs on the TV. It serves the phone remote and drives the page in one of two modes, shown at the top of the phone screen:
 
 - **Direct control** (normal): the service attaches its own DevTools session to the TizenBrew window. Clicks and keys are real input events, the screen preview works, and sites with strict security policies still work.
-- **Compatibility mode** (fallback): used if the TV refuses a second DevTools session. The agent replays input as DOM events. Most sites work, but the screen preview is off, fullscreen video is emulated, and sites whose CSP blocks local connections can't be controlled.
+- **Compatibility mode** (fallback): used if the TV refuses a second DevTools session. The agent replays input as DOM events. Most sites work, but the screen preview is off, fullscreen video is emulated, sites whose CSP blocks local connections can't be controlled, and Back follows the window's history even across tabs.
 
 ## Install
 
@@ -54,8 +55,19 @@ You need TizenBrew already installed on the TV, and the phone on the same networ
 | Screen button (top right) | Live preview. Tap the image to click there, drag to scroll |
 | Text box at the bottom | Replaces the text of the focused TV field as you type. ⏎ presses Enter |
 | Keyboard button | Extra keys: ⌫, Tab, Esc, Space, arrows, Page Up/Down |
+| Tab counter (next to Go) | Tab list: switch, close, open a new tab, close all others |
+| Pop-up notice | A page opened a pop-up. **Show** switches to it, **Close** drops it |
 
-The TV remote still works too: **Back** goes back a page (from the home screen it returns to TizenBrew), and the media keys control the video on the page.
+### Tabs and pop-ups
+
+The TV has a single window, so tabs live on the phone: the active tab is what the TV shows, and switching loads that tab's page again (like opening a bookmark).
+
+- A link meant for a new tab opens as a new tab. Back on its first page closes it and returns to the tab you came from.
+- A pop-up the page opens by itself becomes a background tab and the phone shows a notice. Repeats of the same pop-up are ignored, and a burst of more than 5 in 10 seconds is cut off.
+- **Settings → Pop-ups → Block** drops them instead; the notice then offers **Open** in case you wanted it.
+- Tabs are kept on the TV and come back when TizenBrew restarts.
+
+The TV remote still works too: **Back** works like the phone's Back button (from the home screen it returns to TizenBrew), and the media keys control the video on the page.
 
 ## Updating
 
@@ -105,4 +117,4 @@ src/remote/    phone web app (inlined into the service at build time)
 test/          simulator, unit and end-to-end tests
 ```
 
-Paired phones and bookmarks are stored on the TV in `/home/owner/share/tvPhoneBrowser.json`, next to TizenBrew's own config.
+Paired phones, bookmarks, tabs and the pop-up setting are stored on the TV in `/home/owner/share/tvPhoneBrowser.json`, next to TizenBrew's own config.

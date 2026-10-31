@@ -94,6 +94,44 @@ svg {
 }
 .urlbar input:focus { border-color: var(--accent); }
 .go { background: var(--accent); color: #fff; font-weight: 600; padding: 0 16px; }
+.tabs-btn {
+  flex: none;
+  width: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: var(--panel);
+}
+.tabs-btn span {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  border: 2px solid currentColor;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+
+/* Pop-up notice */
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #222838;
+  border: 1px solid #364057;
+  border-radius: var(--radius);
+  padding: 8px 8px 8px 14px;
+  animation: drop .18s ease-out;
+}
+.notice[hidden] { display: none; }
+@keyframes drop { from { transform: translateY(-6px); opacity: 0; } to { transform: none; opacity: 1; } }
+.notice p { flex: 1; min-width: 0; margin: 0; font-size: 13px; color: var(--muted); }
+.notice p b { color: var(--text); font-weight: 600; word-break: break-all; }
+.notice-actions { display: flex; gap: 6px; flex: none; }
+.notice-actions button { padding: 7px 12px; font-size: 13px; background: var(--panel-2); }
+.notice-actions button.primary { background: var(--accent); }
 
 /* Toolbars */
 .toolbar, .media { display: flex; gap: 6px; }
@@ -219,6 +257,8 @@ svg {
 .sheet h2 { margin: 0; font-size: 19px; }
 .sheet p { margin: 0; color: var(--muted); }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; }
+.head-actions { display: flex; align-items: center; gap: 6px; }
+.small { padding: 7px 12px; font-size: 14px; }
 .row { display: flex; gap: 8px; }
 .row button { flex: 1; }
 .primary { background: var(--accent); color: #fff; font-weight: 600; }
@@ -250,6 +290,18 @@ svg {
   padding: 12px 14px;
 }
 .list .item.sel { background: var(--accent-soft); color: var(--accent); }
+.list .item.sel small { color: #7fa6ef; }
+.list .item .ico {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #2a3550;
+  color: #fff;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
 .list .item .grow { flex: 1; min-width: 0; }
 .list .item small { display: block; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .list .item .remove { padding: 6px; background: transparent; color: var(--muted); }

@@ -15,6 +15,11 @@
   #box { position: absolute; left: 300px; top: 200px; width: 300px; height: 150px; overflow-y: auto; border: 1px solid #999; background: #fff; }
   #box div { height: 1200px; background: linear-gradient(#fff, #9cf); }
   #spacer { position: absolute; top: 600px; height: 3000px; width: 10px; }
+  #popup, #popunder, #formpop { position: absolute; top: 420px; width: 160px; height: 50px; }
+  #popup { left: 40px; }
+  #popunder { left: 220px; }
+  #formpop { left: 400px; }
+  #frame { position: absolute; left: 600px; top: 400px; width: 300px; height: 120px; border: 1px solid #999; }
 </style>
 </head>
 <body>
@@ -26,6 +31,11 @@
   <a id="blank" href="/submitted.html?from=blank" target="_blank">Open in new tab</a>
   <textarea id="notes" placeholder="Notes"></textarea>
   <div id="box"><div></div></div>
+  <button id="popup">Pop-up</button>
+  <button id="popunder">Pop-under</button>
+  <button id="formpop">Form pop-up</button>
+  <form id="popform" action="/submitted.html" target="_blank"><input type="hidden" name="from" value="form"></form>
+  <iframe id="frame" srcdoc="<p>Frame</p>"></iframe>
 </div>
 <div id="spacer"></div>
 <script>
@@ -33,6 +43,20 @@
   document.getElementById('counter').addEventListener('click', function () {
     n++;
     this.textContent = 'Clicked ' + n;
+  });
+  document.getElementById('popup').addEventListener('click', function () {
+    window.open('/submitted.html?from=popup');
+  });
+  // Typical pop-under trick: a link that never joins the page.
+  document.getElementById('popunder').addEventListener('click', function () {
+    var a = document.createElement('a');
+    a.href = '/submitted.html?from=popunder';
+    a.target = '_blank';
+    a.click();
+  });
+  // form.submit() fires no submit event, so only DevTools can catch this one.
+  document.getElementById('formpop').addEventListener('click', function () {
+    document.getElementById('popform').submit();
   });
   window.confirmResult = null;
   document.getElementById('alert').addEventListener('click', function () {

@@ -197,11 +197,123 @@ try {
         });
     }
 
-    await step('new-tab links open in the same window', async () => {
+    const pageTargets = async () => (await getJson(`http://127.0.0.1:${CHROME_PORT}/json/list`)).filter((t) => t.type === 'page').length;
+    const activeTab = () => p.state.tabs.find((t) => t.id === p.state.activeTab);
+    const popupNotice = (fragment) => p.messages.find((m) => m.t === 'popup' && m.url.includes(fragment));
+
+    await step('new-tab links open as a new tab in the same window', async () => {
         await clickAt(100, 272);
-        await waitFor(() => p.state.url.includes('from=blank'), 'same-window navigation');
-        const targets = (await getJson(`http://127.0.0.1:${CHROME_PORT}/json/list`)).filter((t) => t.type === 'page');
-        if (targets.length !== 1) throw new Error(`${targets.length} tabs open`);
+        await waitFor(() => p.state.tabs.length === 2 && activeTab().url.includes('from=blank') && p.state.url.includes('from=blank'), 'new active tab');
+        if (await pageTargets() !== 1) throw new Error('a second window was opened');
+    });
+
+    if (mode === 'cdp') {
+        await step('Back on the first page of a new tab closes it and returns', async () => {
+            p.send({ t: 'back' });
+            await waitFor(() => p.state.tabs.length === 1 && p.state.url.endsWith('test.html'), 'tab closed, opener shown');
+        });
+    } else {
+        await step('Back goes back in the window (compatibility mode)', async () => {
+            p.send({ t: 'back' });
+            await waitFor(() => p.state.url.endsWith('test.html'), 'back');
+            p.send({ t: 'tabCloseOthers' });
+            await waitFor(() => p.state.tabs.length === 1, 'one tab');
+        });
+    }
+    await waitFor(() => tv.eval('!!window.__tvr'), 'agent ready');
+
+    await step('script pop-ups become background tabs and notify the phone', async () => {
+        await clickAt(120, 445);
+        await waitFor(() => popupNotice('from=popup') && p.state.tabs.length === 2, 'background tab');
+        if (!p.state.url.endsWith('test.html')) throw new Error('pop-up took over the screen');
+        if (popupNotice('from=popup').blocked) throw new Error('reported as blocked');
+        if (await pageTargets() !== 1) throw new Error('a second window was opened');
+    });
+
+    await step('pop-unders from links never added to the page are caught', async () => {
+        await clickAt(300, 445);
+        await waitFor(() => popupNotice('from=popunder') && p.state.tabs.length === 3, 'pop-under tab');
+        if (!p.state.url.endsWith('test.html')) throw new Error('pop-under took over the screen');
+    });
+
+    await step('pop-ups from frames are caught', async () => {
+        await tv.eval(`document.getElementById('frame').contentWindow.open('/submitted.html?from=frame'), true`);
+        await waitFor(() => popupNotice('from=frame') && p.state.tabs.length === 4, 'frame pop-up tab');
+        if (await pageTargets() !== 1) throw new Error('a second window was opened');
+    });
+
+    if (mode === 'cdp') {
+        await step('windows that slip past the agent are closed and kept as tabs', async () => {
+            await clickAt(480, 445);
+            await waitFor(() => popupNotice('from=form') && p.state.tabs.length === 5, 'form pop-up tab');
+            await waitFor(async () => (await pageTargets()) === 1, 'stray window closed');
+            if (!p.state.url.endsWith('test.html')) throw new Error('form pop-up took over the screen');
+        });
+    }
+
+    await step('repeated pop-ups are not duplicated', async () => {
+        const before = p.state.tabs.length;
+        p.messages.length = 0;
+        await clickAt(120, 445);
+        await sleep(800);
+        if (p.state.tabs.length !== before) throw new Error('duplicate tab');
+    });
+
+    await step('a burst of pop-ups is cut off', async () => {
+        p.send({ t: 'tabCloseOthers' });
+        await waitFor(() => p.state.tabs.length === 1, 'one tab');
+        await sleep(10000); // let the earlier pop-ups age out of the 10 s window
+        await tv.eval(`for (var i = 0; i < 10; i++) window.open('/submitted.html?flood=' + i); true`);
+        await waitFor(() => p.messages.filter((m) => m.t === 'popup' && m.url.includes('flood=')).length === 10, '10 notices');
+        await sleep(300);
+        if (p.state.tabs.length !== 6) throw new Error(`${p.state.tabs.length - 1} pop-up tabs kept, expected 5`);
+    });
+
+    await step('switching to a background tab loads it', async () => {
+        const firstTab = p.state.activeTab;
+        p.send({ t: 'tabCloseOthers' });
+        await sleep(10000);
+        await clickAt(120, 445);
+        await waitFor(() => p.state.tabs.some((t) => t.url.includes('from=popup')), 'pop-up tab');
+        const popupTab = p.state.tabs.find((t) => t.url.includes('from=popup'));
+        p.send({ t: 'tabSwitch', id: popupTab.id });
+        await waitFor(() => p.state.activeTab === popupTab.id && p.state.url.includes('from=popup'), 'switched');
+        await sleep(300);
+        if (!activeTab().url.includes('from=popup')) throw new Error('tab address overwritten');
+        if (!p.state.tabs.find((t) => t.id === firstTab).url.endsWith('test.html')) throw new Error('first tab lost its address');
+        if (mode === 'cdp') {
+            p.send({ t: 'back' });
+            await waitFor(() => p.state.activeTab === firstTab && p.state.url.endsWith('test.html'), 'Back returned to the opener');
+            if (p.state.tabs.some((t) => t.id === popupTab.id)) throw new Error('pop-up tab not closed');
+        } else {
+            p.send({ t: 'tabSwitch', id: firstTab });
+            await waitFor(() => p.state.activeTab === firstTab && p.state.url.endsWith('test.html'), 'switched back');
+        }
+        await waitFor(() => tv.eval('!!window.__tvr'), 'agent ready');
+    });
+
+    await step('pop-ups can be blocked instead', async () => {
+        p.send({ t: 'tabCloseOthers' });
+        p.send({ t: 'setting', key: 'blockPopups', value: true });
+        await waitFor(() => p.state.blockPopups && p.state.tabs.length === 1, 'setting on');
+        p.messages.length = 0;
+        await clickAt(120, 445);
+        await waitFor(() => popupNotice('from=popup') && popupNotice('from=popup').blocked, 'blocked notice');
+        await sleep(300);
+        if (p.state.tabs.length !== 1) throw new Error('tab created while blocking');
+        p.send({ t: 'setting', key: 'blockPopups', value: false });
+        await waitFor(() => !p.state.blockPopups, 'setting off');
+    });
+
+    await step('the TV remote Back key goes back', async () => {
+        p.send({ t: 'nav', url: `${pages}/submitted.html?from=remote` });
+        await waitFor(() => p.state.url.includes('from=remote'), 'navigated');
+        await waitFor(() => tv.eval('!!window.__tvr'), 'agent ready');
+        await sleep(300);
+        const keyEvent = { windowsVirtualKeyCode: 10009, nativeVirtualKeyCode: 10009, key: 'GoBack', code: 'BrowserBack' };
+        await tv.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...keyEvent });
+        await tv.send('Input.dispatchKeyEvent', { type: 'keyUp', ...keyEvent });
+        await waitFor(() => p.state.url.endsWith('test.html'), 'back via remote');
     });
 
     await step('bookmarks can be added and removed', async () => {

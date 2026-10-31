@@ -1,6 +1,7 @@
 'use strict';
 
-// Paired phones and bookmarks, persisted next to TizenBrew's own config.
+// Paired phones, bookmarks, open tabs and settings, persisted next to
+// TizenBrew's own config.
 
 const fs = require('fs');
 const log = require('./log');
@@ -15,12 +16,16 @@ const DEFAULT_BOOKMARKS = [
 class Store {
     constructor(file) {
         this.file = file;
-        this.data = { tokens: [], bookmarks: DEFAULT_BOOKMARKS.slice() };
+        this.data = { tokens: [], bookmarks: DEFAULT_BOOKMARKS.slice(), tabs: [], settings: { blockPopups: false } };
         this._saveTimer = null;
         try {
             const loaded = JSON.parse(fs.readFileSync(file, 'utf8'));
             if (Array.isArray(loaded.tokens)) this.data.tokens = loaded.tokens;
             if (Array.isArray(loaded.bookmarks)) this.data.bookmarks = loaded.bookmarks;
+            if (Array.isArray(loaded.tabs)) this.data.tabs = loaded.tabs;
+            if (loaded.settings && typeof loaded.settings === 'object') {
+                Object.keys(loaded.settings).forEach((k) => { this.data.settings[k] = loaded.settings[k]; });
+            }
         } catch (e) {
             if (e.code !== 'ENOENT') log.warn('Could not read', file, e.message);
         }
@@ -68,6 +73,24 @@ class Store {
 
     removeBookmark(url) {
         this.data.bookmarks = this.data.bookmarks.filter((b) => b.url !== url);
+        this.save();
+    }
+
+    tabs() {
+        return this.data.tabs.slice();
+    }
+
+    setTabs(list) {
+        this.data.tabs = list;
+        this.save();
+    }
+
+    setting(key) {
+        return this.data.settings[key];
+    }
+
+    setSetting(key, value) {
+        this.data.settings[key] = value;
         this.save();
     }
 }
