@@ -1,0 +1,31 @@
+{
+  "name": "tv-phone-browser",
+  "appName": "Phone Browser",
+  "version": "1.0.0",
+  "description": "A full web browser for your Samsung TV that you drive from your phone: trackpad, keyboard, URL bar and live screen preview.",
+  "packageType": "mods",
+  "websiteURL": "about:blank",
+  "main": "dist/agent.js",
+  "serviceFile": "dist/service.js",
+  "evaluateScriptOnDocumentStart": false,
+  "keys": [
+    "MediaPlayPause",
+    "MediaPlay",
+    "MediaPause",
+    "MediaStop",
+    "MediaFastForward",
+    "MediaRewind"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs && node --no-warnings test/unit.mjs && node --no-warnings test/e2e.mjs cdp && node --no-warnings test/e2e.mjs agent",
+    "dev": "node build.mjs && node --no-warnings test/harness.mjs"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@babel/core": "^8.0.10",
+    "@babel/preset-env": "^8.0.7",
+    "esbuild": "^0.28.2",
+    "qrcode-generator": "^2.0.4"
+  }
+}
