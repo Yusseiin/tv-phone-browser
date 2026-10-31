@@ -3,6 +3,10 @@
   "appName": "Phone Browser",
   "version": "1.0.0",
   "description": "A full web browser for your Samsung TV that you drive from your phone: trackpad, keyboard, URL bar and live screen preview.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Yusseiin/tv-phone-browser"
+  },
   "packageType": "mods",
   "websiteURL": "about:blank",
   "main": "dist/agent.js",

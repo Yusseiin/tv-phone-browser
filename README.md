@@ -35,8 +35,8 @@ TizenBrew launches its window in debug mode and injects `dist/agent.js` into eve
 
 You need TizenBrew already installed on the TV, and the phone on the same network as the TV.
 
-1. **Publish this folder as a public GitHub repository**, for example `github.com/<you>/tv-phone-browser`. Commit `dist/` too: TizenBrew downloads `package.json`, `dist/agent.js` and `dist/service.js` straight from GitHub through jsDelivr.
-2. **Add the module on the TV.** Open TizenBrew, press the green button for the module manager, choose **Add GitHub Module** and enter `<you>/tv-phone-browser`.
+1. **The module is published at [github.com/Yusseiin/tv-phone-browser](https://github.com/Yusseiin/tv-phone-browser).** TizenBrew downloads `package.json`, `dist/agent.js` and `dist/service.js` straight from there through jsDelivr, which is why `dist/` is committed. (In a fork, use your own `<user>/<repo>` in the steps below.)
+2. **Add the module on the TV.** Open TizenBrew, press the green button for the module manager, choose **Add GitHub Module** and enter `Yusseiin/tv-phone-browser`.
 3. **Open "Phone Browser"** from the TizenBrew list. The TV shows a home screen with an address and a QR code.
 4. **On the phone**, scan the QR code or open `http://<TV-IP>:8765`. Tap through to the pairing screen; a 4-digit code appears on the TV. Enter it once and the phone stays paired.
 5. Optional:
@@ -62,9 +62,9 @@ The TV remote still works too: **Back** goes back a page (from the home screen i
 Change files in `src/`, run `npm run build`, commit, push. jsDelivr caches GitHub files: about 12 hours for a branch, and up to 7 days once the repo has release tags. To get an update onto the TV sooner, purge these URLs with jsDelivr's purge tool (jsdelivr.com/tools/purge) and restart TizenBrew:
 
 ```
-https://cdn.jsdelivr.net/gh/<you>/tv-phone-browser/package.json
-https://cdn.jsdelivr.net/gh/<you>/tv-phone-browser/dist/agent.js
-https://cdn.jsdelivr.net/gh/<you>/tv-phone-browser/dist/service.js
+https://cdn.jsdelivr.net/gh/Yusseiin/tv-phone-browser/package.json
+https://cdn.jsdelivr.net/gh/Yusseiin/tv-phone-browser/dist/agent.js
+https://cdn.jsdelivr.net/gh/Yusseiin/tv-phone-browser/dist/service.js
 ```
 
 ## Troubleshooting
