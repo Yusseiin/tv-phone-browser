@@ -67,7 +67,11 @@ export function startPages() {
     return new Promise((resolve) => server.listen(PAGES_PORT, '127.0.0.1', () => resolve(server)));
 }
 
-export async function launchChrome(profileDir) {
+export const MENU_URL = `http://127.0.0.1:${PAGES_PORT}/tizenbrew-ui/dist/index.html`;
+
+// The TV window starts on TizenBrew's menu (startUrl); launching Phone Browser
+// from it navigates to about:blank.
+export async function launchChrome(profileDir, startUrl = 'about:blank') {
     fs.rmSync(profileDir, { recursive: true, force: true });
     const proc = spawn(CHROME, [
         '--headless=new',
@@ -77,7 +81,7 @@ export async function launchChrome(profileDir) {
         '--no-first-run',
         '--no-default-browser-check',
         '--disable-extensions',
-        'about:blank'
+        startUrl
     ], { stdio: 'ignore' });
     for (let i = 0; i < 50; i++) {
         try {
@@ -123,7 +127,9 @@ function wsConnect(url) {
 
 // A second DevTools client used by the tests to look inside the "TV" page.
 // With tizenBrew: true it also injects dist/agent.js into every new JS
-// context, exactly like TizenBrew's service/utils/debugger.js does.
+// context, exactly like TizenBrew's service/utils/debugger.js does while
+// Phone Browser is the launched module. Set `injectAgent = false` to play
+// another TizenBrew app being open.
 export async function inspector(options = {}) {
     const targets = await getJson(`http://127.0.0.1:${CHROME_PORT}/json/list`);
     const page = targets.find((t) => t.type === 'page');
@@ -136,12 +142,13 @@ export async function inspector(options = {}) {
         conn.send(JSON.stringify({ id: msgId, method, params: params || {} }));
     });
     const agentSource = fs.readFileSync(path.join(root, 'dist/agent.js'), 'utf8');
+    let client = null;
     conn.on('message', (text) => {
         const msg = JSON.parse(text);
         if (msg.id && pending.has(msg.id)) {
             pending.get(msg.id)(msg);
             pending.delete(msg.id);
-        } else if (msg.method === 'Runtime.executionContextCreated' && options.tizenBrew) {
+        } else if (msg.method === 'Runtime.executionContextCreated' && options.tizenBrew && (!client || client.injectAgent)) {
             send('Runtime.evaluate', { expression: agentSource, contextId: msg.params.context.id }).catch(() => {});
         }
     });
@@ -149,14 +156,27 @@ export async function inspector(options = {}) {
         await send('Runtime.enable');
         await send('Debugger.enable');
     }
-    return {
+    client = {
+        injectAgent: true,
         send,
         async eval(expression) {
             const r = await send('Runtime.evaluate', { expression, returnByValue: true });
             return r.result.value;
         },
+        // What TizenBrew does when you pick Phone Browser in its menu: the
+        // menu page itself sets location.href (so about:blank inherits its
+        // origin, which matters to Chrome's local-network checks).
+        async launchPhoneBrowser() {
+            if (!(await client.eval('location.pathname')).includes('/tizenbrew-ui/')) {
+                await send('Page.navigate', { url: MENU_URL });
+                await waitFor(async () => (await client.eval('location.pathname')).includes('/tizenbrew-ui/'), 'TizenBrew menu');
+            }
+            client.injectAgent = true;
+            await send('Runtime.evaluate', { expression: "location.href = 'about:blank'" });
+        },
         close: () => conn.close()
     };
+    return client;
 }
 
 // The phone side of the protocol.

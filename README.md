@@ -67,7 +67,14 @@ The TV has a single window, so tabs live on the phone: the active tab is what th
 - **Settings → Pop-ups → Block** drops them instead; the notice then offers **Open** in case you wanted it.
 - Tabs are kept on the TV and come back when TizenBrew restarts.
 
-The TV remote still works too: **Back** works like the phone's Back button (from the home screen it returns to TizenBrew), and the media keys control the video on the page.
+The TV remote still works too: **Back** works like the phone's Back button, and the media keys control the video on the page.
+
+### Leaving Phone Browser
+
+- **On the TV:** press **Back** on the remote while the Phone Browser home screen is showing.
+- **On the phone:** **Settings → Back to TizenBrew**.
+
+Both return to the TizenBrew menu, where you can open another app such as TizenTube. While TizenBrew or another app is on screen, Phone Browser stays out of the way: the phone shows "Phone Browser isn't on the TV screen right now" and ignores the trackpad and keys. To come back, pick Phone Browser in TizenBrew again (it opens a fresh home tab and keeps your last page as a tab), or tap **Show it** on the phone, which reopens the page you left.
 
 ## Updating
 

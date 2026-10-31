@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-    root, SERVICE_PORT, PAGES_PORT, CHROME_PORT, startService, startPages, launchChrome,
+    root, SERVICE_PORT, PAGES_PORT, CHROME_PORT, MENU_URL, startService, startPages, launchChrome,
     getJson, postJson, inspector, phone, waitFor, sleep
 } from './tv-sim.mjs';
 
@@ -33,8 +33,8 @@ async function step(name, fn) {
     }
 }
 
-const chrome = await launchChrome(path.join(os.tmpdir(), `tvr-chrome-${mode}`));
 const pageServer = await startPages();
+const chrome = await launchChrome(path.join(os.tmpdir(), `tvr-chrome-${mode}`), MENU_URL);
 startService({
     dataFile,
     testPin: '4321',
@@ -46,6 +46,12 @@ let p;
 console.log(`Phone Browser e2e (${mode} mode)`);
 
 try {
+    if (mode === 'cdp') {
+        await step('stays out of the way while the TizenBrew menu is open', () =>
+            waitFor(async () => (await getJson(`${base}/api/status`)).mode === 'away', 'away'));
+    }
+    await tv.launchPhoneBrowser();
+
     await step(`service reports ${mode} mode`, () =>
         waitFor(async () => (await getJson(`${base}/api/status`)).mode === mode, 'mode'));
 
@@ -314,6 +320,60 @@ try {
         await tv.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...keyEvent });
         await tv.send('Input.dispatchKeyEvent', { type: 'keyUp', ...keyEvent });
         await waitFor(() => p.state.url.endsWith('test.html'), 'back via remote');
+    });
+
+    await step('Back to TizenBrew returns to the TizenBrew menu', async () => {
+        p.send({ t: 'nav', url: `${pages}/test.html?last=1` }); // newest history entry, see compatibility-mode exit
+        await waitFor(() => p.state.url.endsWith('test.html?last=1'), 'test page');
+        await waitFor(() => tv.eval('!!window.__tvr'), 'agent ready');
+        p.send({ t: 'exit' });
+        await waitFor(async () => (await tv.eval('location.pathname')).includes('/tizenbrew-ui/'), 'TizenBrew menu');
+        await waitFor(() => p.state.mode === (mode === 'cdp' ? 'away' : 'none') && p.state.url === '', 'phone shows away');
+    });
+
+    if (mode === 'cdp') {
+        await step('other TizenBrew apps are left alone', async () => {
+            tv.injectAgent = false; // TizenBrew now injects the other app's script, not ours
+            await tv.send('Page.navigate', { url: `${pages}/submitted.html?from=otherapp` });
+            await waitFor(async () => (await tv.eval('location.search')) === '?from=otherapp', 'other app page');
+            await sleep(1500);
+            if (await tv.eval('!!window.__tvr')) throw new Error('agent injected into another app');
+            if (p.state.mode !== 'away') throw new Error('woke up for another app');
+            p.send({ t: 'moveTo', fx: 0.5, fy: 0.5 });
+            p.send({ t: 'click', count: 1 });
+            p.send({ t: 'key', key: 'Enter' });
+            await sleep(500);
+            if ((await tv.eval('location.search')) !== '?from=otherapp') throw new Error('phone input reached the other app');
+        });
+
+        await step('Show it brings Phone Browser back where it was', async () => {
+            tv.injectAgent = true;
+            p.send({ t: 'show' });
+            await waitFor(() => p.state.mode === 'cdp' && p.state.url.endsWith('test.html?last=1'), 'back on the test page');
+            await waitFor(() => tv.eval('!!window.__tvr'), 'agent ready');
+            p.send({ t: 'exit' });
+            await waitFor(() => p.state.mode === 'away', 'away again');
+        });
+    }
+
+    await step('reopening from TizenBrew starts on a home tab and keeps the last page', async () => {
+        const before = p.state.tabs.length;
+        await tv.launchPhoneBrowser();
+        await waitFor(() => p.state.mode === mode && p.state.home, 'home screen');
+        await waitFor(() => p.state.tabs.length === before + 1 && p.state.tabs.some((t) => t.url.endsWith('test.html?last=1')), 'previous tab kept');
+        await waitFor(() => tv.eval(`document.body.textContent.includes('return to TizenBrew')`), 'exit hint on home');
+    });
+
+    await step('the remote Back key on the home screen returns to TizenBrew', async () => {
+        await waitFor(() => tv.eval('!!window.__tvr'), 'agent ready');
+        await sleep(300);
+        const keyEvent = { windowsVirtualKeyCode: 10009, nativeVirtualKeyCode: 10009, key: 'GoBack', code: 'BrowserBack' };
+        await tv.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...keyEvent });
+        await tv.send('Input.dispatchKeyEvent', { type: 'keyUp', ...keyEvent });
+        await waitFor(async () => (await tv.eval('location.pathname')).includes('/tizenbrew-ui/'), 'TizenBrew menu');
+        await tv.launchPhoneBrowser();
+        await waitFor(() => p.state.mode === mode && p.state.home, 'reopened');
+        await waitFor(() => tv.eval('!!window.__tvr'), 'agent ready');
     });
 
     await step('bookmarks can be added and removed', async () => {

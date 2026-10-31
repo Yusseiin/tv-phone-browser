@@ -6,17 +6,18 @@
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { root, startService, startPages, launchChrome, inspector, CHROME_PORT, SERVICE_PORT } from './tv-sim.mjs';
+import { root, startService, startPages, launchChrome, inspector, CHROME_PORT, SERVICE_PORT, MENU_URL } from './tv-sim.mjs';
 
 const VIEWER_PORT = 8767;
 
-const chrome = await launchChrome(path.join(os.tmpdir(), 'tvr-chrome-dev'));
 await startPages();
+const chrome = await launchChrome(path.join(os.tmpdir(), 'tvr-chrome-dev'), MENU_URL);
 startService({
     dataFile: path.join(root, 'test/.data/store-dev.json'),
     cdpEndpoints: [{ host: '127.0.0.1', port: CHROME_PORT }]
 });
 const tv = await inspector({ tizenBrew: true });
+await tv.launchPhoneBrowser();
 
 http.createServer(async (req, res) => {
     if (req.url.startsWith('/tv.jpg')) {

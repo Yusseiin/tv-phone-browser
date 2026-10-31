@@ -164,6 +164,7 @@
             case 'nav': location.href = msg.url; return true;
             case 'history': goHistory(msg.delta); return true;
             case 'reload': location.reload(); return true;
+            case 'exit': leaveToTizenBrew(); return true;
             case 'zoom': changeZoom(msg.dir); return true;
             case 'media': return media(msg.action, msg.delta);
             case 'home': homeInfo = msg; renderHome(); return true;
@@ -409,6 +410,7 @@
         '.h-status{font-size:24px;color:#7d879c;margin-top:26px}' +
         '.h-status i{display:inline-block;width:14px;height:14px;border-radius:50%;background:#59607a;margin-right:12px;vertical-align:middle}' +
         '.h-status.ok i{background:#3ecf8e}' +
+        '.h-exit{font-size:24px;color:#59607a;margin-top:10px}' +
         '.h-marks{display:flex;gap:28px;flex-wrap:wrap;margin-top:40px}' +
         '.h-mark{display:flex;align-items:center;gap:18px;width:330px;box-sizing:border-box;padding:22px 26px;background:#151a24;border:2px solid #232a39;' +
         'border-radius:20px;color:#e8ebf2;text-decoration:none;font-size:26px;font-weight:500;overflow:hidden;white-space:nowrap}' +
@@ -455,6 +457,7 @@
                 esc(info ? info.url.replace(/^http:\/\//, '') : '…') + '</span></li>' +
                 '<li>Enter the pairing code that appears on the TV.</li></ol>' +
                 '<div class="h-status' + (phones ? ' ok' : '') + '"><i></i>' + esc(statusText) + '</div>' +
+                '<div class="h-exit">Press Back on the remote to return to TizenBrew.</div>' +
                 '</div><div class="h-qr">' + (info ? info.qr : '') + '</div></div>' +
                 '<div class="h-marks">' + marks + '</div></div>';
         });
@@ -655,6 +658,21 @@
             default:
                 break;
         }
+    }
+
+    // Compatibility-mode exit: TizenBrew's menu is the window's first page.
+    // That works when this page is the newest history entry; otherwise quit
+    // TizenBrew altogether so the TV isn't left stuck here.
+    function leaveToTizenBrew() {
+        var timer = setTimeout(function () {
+            try {
+                tizen.application.getCurrentApplication().exit();
+            } catch (e) {
+                toast('Press Back on the remote until TizenBrew appears');
+            }
+        }, 3000);
+        window.addEventListener('pagehide', function () { clearTimeout(timer); });
+        if (history.length > 1) history.go(-(history.length - 1));
     }
 
     function goHistory(delta) {
@@ -873,10 +891,10 @@
             case TV_KEYS.back:
                 e.preventDefault();
                 if (theater || document.fullscreenElement || document.webkitFullscreenElement) return exitFullscreen();
-                // The service keeps Back inside the current tab. On the home
-                // screen, or with no way to reach the service, Back works as usual
-                // (from home it returns to TizenBrew).
-                if (!isHome() && (socketOpen || Date.now() - lastDrain < 1500)) return emit({ t: 'remoteBack' });
+                // The service keeps Back inside the current tab, and on the home
+                // screen returns to the TizenBrew menu. Without a way to reach
+                // it, Back just goes back.
+                if (socketOpen || Date.now() - lastDrain < 1500) return emit({ t: isHome() ? 'exit' : 'remoteBack' });
                 if (history.length > 1) return history.back();
                 try { tizen.application.getCurrentApplication().exit(); } catch (err) { /* not on a TV */ }
                 break;

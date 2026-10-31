@@ -27,6 +27,7 @@ const HOME_HTML = '<!doctype html><html><head><meta charset="utf-8"><title>Phone
 
 const HOME_URL = 'http://127.0.0.1:' + PORT + '/home';
 const ALLOWED_URL = /^(https?:\/\/|about:blank)/i;
+const TIZENBREW_MENU = /\/tizenbrew-ui\//;
 const MAX_TABS = 30;
 const KEYS = {
     'Enter': [13, 'Enter', '\r'],
@@ -54,18 +55,72 @@ const cursor = { x: 960, y: 540, dragging: false };
 const phones = [];
 let agent = null;
 let pairing = null;
+// Whether Phone Browser is what the TizenBrew window shows. The DevTools
+// session stays attached when you go back to the TizenBrew menu or open
+// another TizenBrew app; the service must leave those pages alone.
+let active = false;
+// Set when the service itself navigates away from another app's page, so the
+// next page counts as Phone Browser again.
+let resuming = false;
 
 function noop() {}
 
 function mode() {
-    if (cdp.attached) return 'cdp';
-    return agent ? 'agent' : 'none';
+    if (cdp.attached && active) return 'cdp';
+    if (agent) return 'agent';
+    return cdp.attached ? 'away' : 'none';
 }
 
 // DevTools commands hang while a JS dialog is open, so only drive the page
 // over DevTools when no dialog is showing.
 function canDrive() {
-    return cdp.attached && !page.dialog;
+    return cdp.attached && active && !page.dialog;
+}
+
+function setActive(on, reason) {
+    if (active === on) return;
+    active = on;
+    log.info(on ? 'Phone Browser is on the TV screen' : 'Phone Browser left the TV screen (' + reason + ')');
+    if (on) {
+        ensureAgent();
+        readLayout();
+        cursorChanged();
+    } else {
+        page.focus = null;
+    }
+    updateScreen();
+    broadcast();
+}
+
+// TizenBrew starts Phone Browser on about:blank (the Home button uses
+// HOME_URL instead). If the last tab was a website, keep it and start on a
+// fresh home tab.
+function enterFromTizenBrew() {
+    if (isHomeUrl(activeTab.url)) return;
+    const home = makeTab(HOME_URL, 'Home');
+    tabs.splice(tabs.indexOf(activeTab) + 1, 0, home);
+    activeTab = home;
+    trimTabs();
+    saveTabs();
+}
+
+// Phone Browser came on screen.
+function wake(url) {
+    if (active) return;
+    if (!resuming && String(url).indexOf('about:blank') === 0) enterFromTizenBrew();
+    resuming = false;
+    setActive(true);
+}
+
+// When DevTools attaches, or a page loads while Phone Browser is away: it's
+// ours if it is TizenBrew's start page for us or TizenBrew injected our agent.
+function checkActive() {
+    if (!cdp.attached || active) return;
+    cdp.evaluate('location.href + "\\n" + !!window.__tvr').then((v) => {
+        const parts = String(v).split('\n');
+        if (TIZENBREW_MENU.test(parts[0])) return;
+        if (parts[1] === 'true' || parts[0].indexOf('about:blank') === 0) wake(parts[0]);
+    }).catch(noop);
 }
 
 function phoneUrl() {
@@ -168,7 +223,11 @@ function handleAgentEvent(ev) {
             page.home = !!ev.home;
             cursor.x = Math.min(cursor.x, page.vw - 1);
             cursor.y = Math.min(cursor.y, page.vh - 1);
-            updateActiveTab(page.url, page.title, ev.t === 'hello');
+            // Our agent only runs when TizenBrew injects it for Phone Browser.
+            if (ev.t === 'hello' && !active) wake(page.url);
+            // Without DevTools, a hello from about:blank is how a relaunch shows.
+            else if (ev.t === 'hello' && !cdp.attached && page.url.indexOf('about:blank') === 0) enterFromTizenBrew();
+            if (active) updateActiveTab(page.url, page.title, ev.t === 'hello');
             if (ev.t === 'hello') {
                 page.focus = ev.focus || null;
                 pushHome();
@@ -202,6 +261,9 @@ function handleAgentEvent(ev) {
             break;
         case 'remoteBack': // Back key on the TV remote
             goBack();
+            break;
+        case 'exit': // Back key on the home screen
+            exitToTizenBrew();
             break;
         case 'log':
             log.info('[page]', ev.text);
@@ -373,6 +435,8 @@ function navigate(url) {
     if (page.dialog) return toastPhones('Answer the dialog on the TV first');
     page.focus = null;
     if (cdp.attached) {
+        // Opening something from the phone brings Phone Browser back on screen.
+        if (!active) resuming = true;
         return cdp.send('Page.navigate', { url: url }).catch(() => toAgent({ t: 'nav', url: url }));
     }
     return toAgent({ t: 'nav', url: url });
@@ -380,6 +444,26 @@ function navigate(url) {
 
 function goHome() {
     return navigate(HOME_URL);
+}
+
+// Back to the TizenBrew menu: the first entry of the window's history.
+// Compatibility mode can't see the history; the agent does its best.
+function exitToTizenBrew() {
+    if (page.dialog) return toastPhones('Answer the dialog on the TV first');
+    if (!canDrive()) return toAgent({ t: 'exit' });
+    return cdp.send('Page.getNavigationHistory').then((h) => {
+        const menu = h.entries.filter((e) => TIZENBREW_MENU.test(e.url))[0];
+        if (!menu) return toAgent({ t: 'exit' });
+        return cdp.send('Page.navigateToHistoryEntry', { entryId: menu.id });
+    }).catch(() => toAgent({ t: 'exit' }));
+}
+
+// The phone's "Show it": reload the active tab in the TizenBrew window.
+function showPhoneBrowser() {
+    if (active || !cdp.attached) return;
+    switching = { tab: activeTab, since: Date.now() };
+    activeTab.base = null;
+    navigate(isHomeUrl(activeTab.url) ? HOME_URL : activeTab.url);
 }
 
 // All tabs share the TV's one window history. Back stays inside the active
@@ -561,7 +645,7 @@ let latestFrame = null;
 let frameSeq = 0;
 
 function wantScreen() {
-    return cdp.attached && phones.some((p) => p.screen);
+    return cdp.attached && active && phones.some((p) => p.screen);
 }
 
 function updateScreen() {
@@ -628,6 +712,7 @@ cdp.on('attached', () => {
     // Lets us catch windows that slip past the agent (see onTargetInfo).
     cdp.send('Target.setDiscoverTargets', { discover: true })
         .catch((e) => log.info('Pop-up window detection unavailable:', e.message));
+    checkActive();
     ensureAgent();
     readLayout();
     updateScreen();
@@ -637,15 +722,21 @@ cdp.on('attached', () => {
 cdp.on('detached', () => {
     screenState = 'off';
     page.dialog = null;
+    active = false;
     broadcast();
 });
 
 cdp.on('Page.frameNavigated', (p) => {
     if (!p.frame || p.frame.parentId) return;
-    const loadingTab = switching && switching.tab;
-    page.url = p.frame.url;
+    const url = p.frame.url;
+    page.url = url;
     page.focus = null;
-    updateActiveTab(p.frame.url, null, true);
+    if (TIZENBREW_MENU.test(url)) setActive(false, 'TizenBrew menu');
+    else if (!active && (resuming || url.indexOf('about:blank') === 0 || url.indexOf(HOME_URL) === 0)) wake(url);
+    // Pages of other TizenBrew apps don't belong to any tab.
+    if (!active) return broadcast();
+    const loadingTab = switching && switching.tab;
+    updateActiveTab(url, null, true);
     // Remember where this tab's history starts, so Back stays inside it.
     if (loadingTab && loadingTab === activeTab) {
         cdp.send('Page.getNavigationHistory').then((h) => { loadingTab.base = h.currentIndex; }).catch(noop);
@@ -664,7 +755,7 @@ cdp.on('Page.windowOpen', (p) => {
 });
 
 function onTargetInfo(info) {
-    if (!info || info.type !== 'page' || !cdp.targetId) return;
+    if (!info || info.type !== 'page' || !cdp.targetId || !active) return;
     if (info.targetId === cdp.targetId || info.openerId !== cdp.targetId || closedWindows[info.targetId]) return;
     closedWindows[info.targetId] = true;
     let url = info.url;
@@ -676,8 +767,12 @@ function onTargetInfo(info) {
 
 cdp.on('Target.targetCreated', (p) => onTargetInfo(p.targetInfo));
 
-cdp.on('Page.domContentEventFired', () => ensureAgent());
+cdp.on('Page.domContentEventFired', () => {
+    checkActive();
+    ensureAgent();
+});
 cdp.on('Page.loadEventFired', () => {
+    checkActive();
     ensureAgent();
     readLayout();
 });
@@ -709,15 +804,18 @@ function toastPhones(text) {
 }
 
 function stateMessage() {
+    const m = mode();
+    // Only describe the page while Phone Browser is the one on screen.
+    const live = m === 'cdp' || m === 'agent';
     return {
         t: 'state',
-        mode: mode(),
-        url: page.url,
-        title: page.title,
-        home: page.home,
+        mode: m,
+        url: live ? page.url : '',
+        title: live ? page.title : '',
+        home: live && page.home,
         zoom: page.zoom,
         focus: page.focus,
-        dialog: page.dialog,
+        dialog: live ? page.dialog : null,
         vw: page.vw,
         vh: page.vh,
         bookmarks: store.bookmarks(),
@@ -793,6 +891,12 @@ function handlePhone(phone, msg) {
             break;
         case 'tabCloseOthers':
             closeOtherTabs();
+            break;
+        case 'exit':
+            exitToTizenBrew();
+            break;
+        case 'show':
+            showPhoneBrowser();
             break;
         case 'setting':
             if (msg.key === 'blockPopups') {

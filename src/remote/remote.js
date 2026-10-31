@@ -13,6 +13,7 @@
   const MODE_TEXT = {
     cdp: ['ok', 'Direct control'],
     agent: ['warn', 'Compatibility mode'],
+    away: ['warn', 'TizenBrew is showing something else'],
     none: ['', 'Open Phone Browser on the TV']
   };
 
@@ -119,6 +120,7 @@
     setStatus(m[0], next.mode === 'none' || !next.title ? m[1] : `${m[1]} · ${next.title}`);
 
     if (document.activeElement !== $('url')) $('url').value = next.home ? '' : next.url;
+    $('away').hidden = next.mode !== 'away';
 
     const bookmarked = next.bookmarks.some((b) => b.url === next.url);
     $('btnStar').classList.toggle('on', bookmarked);
@@ -780,6 +782,13 @@
     ]).then(([status, logs]) => {
       out.textContent = JSON.stringify(status, null, 2) + '\n\n' + (logs.lines || []).join('\n');
     }).catch((e) => { out.textContent = 'Failed: ' + e.message; });
+  });
+
+  $('btnShow').addEventListener('click', () => send({ t: 'show' }));
+
+  $('btnExit').addEventListener('click', () => {
+    closeSheet('settingsSheet');
+    send({ t: 'exit' });
   });
 
   $('btnForget').addEventListener('click', () => {

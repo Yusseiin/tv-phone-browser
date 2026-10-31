@@ -31,6 +31,11 @@
     <button type="button" class="tabs-btn" id="btnTabs" aria-label="Tabs" title="Tabs"><span id="tabCount">1</span></button>
   </form>
 
+  <div class="notice" id="away" hidden>
+    <p>Phone Browser isn't on the TV screen right now.</p>
+    <div class="notice-actions"><button class="primary" id="btnShow">Show it</button></div>
+  </div>
+
   <div class="notice" id="notice" hidden>
     <p id="noticeText"></p>
     <div class="notice-actions" id="noticeActions"></div>
@@ -151,6 +156,7 @@
       <option value="ecosia">Ecosia</option>
     </select>
   </label>
+  <button class="wide" id="btnExit">Back to TizenBrew</button>
   <div class="row">
     <button id="btnDiag">Diagnostics</button>
     <button id="btnForget">Forget this phone</button>
